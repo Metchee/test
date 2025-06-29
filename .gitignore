@@ -1,0 +1,8 @@
+#directories
+build
+__pycache__
+
+#files
+*.log
+*.txt
+*.md
