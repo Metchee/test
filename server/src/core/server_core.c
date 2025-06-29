@@ -2,7 +2,7 @@
 ** EPITECH PROJECT, 2025
 ** zappy
 ** File description:
-** server core implementation - FIXED VERSION
+** server core implementation - creation and startup
 */
 
 #include <stdio.h>
@@ -13,23 +13,10 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/time.h>  // ✅ AJOUT: Include nécessaire pour gettimeofday
-#include <time.h>      // ✅ AJOUT: Include pour les fonctions de temps
+#include <netinet/tcp.h>
 #include "../include/server.h"
 #include "../include/server_signal.h"
 #include "../include/server_network.h"
-#include "../include/message_protocol.h"
-#include "../include/resource_utils.h"
-#include "../include/player.h"
-#include <netinet/tcp.h>
-
-// ✅ NOUVELLE FONCTION: Timing plus précis
-static double get_current_time_seconds(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec + tv.tv_usec / 1000000.0;
-}
 
 static int create_server_socket(server_t *server)
 {
@@ -53,10 +40,9 @@ static int create_server_socket(server_t *server)
     return 0;
 }
 
-static int bind_and_listen(server_t *server)
+static int bind_server_socket(server_t *server)
 {
     struct sockaddr_in addr;
-    int opt = 1;
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -68,6 +54,13 @@ static int bind_and_listen(server_t *server)
         close(server->server_fd);
         return -1;
     }
+    return 0;
+}
+
+static int listen_and_optimize(server_t *server)
+{
+    int opt = 1;
+
     if (listen(server->server_fd, SOMAXCONN) == -1) {
         perror("listen");
         close(server->server_fd);
@@ -80,31 +73,13 @@ static int bind_and_listen(server_t *server)
     return 0;
 }
 
-static void server_handle_client_events(server_t *server,
-    client_connection_t *client)
+static int bind_and_listen(server_t *server)
 {
-    if (client && server_read_client_data(server, client) == -1) {
-        server_disconnect_client(server, client);
-    } else {
-        server_process_client_commands(server, client);
-    }
-}
-
-static void server_process_client_events(server_t *server)
-{
-    client_connection_t *client = NULL;
-    int original_client_count = server->client_count;
-    int i = 0;
-
-    for (i = 2; i < original_client_count + 2; i++) {
-        if (!(server->poll_fds[i].revents & POLLIN))
-            continue;
-        client = server_find_client_by_fd(server,
-            server->poll_fds[i].fd);
-        if (!client)
-            continue;
-        server_handle_client_events(server, client);
-    }
+    if (bind_server_socket(server) == -1)
+        return -1;
+    if (listen_and_optimize(server) == -1)
+        return -1;
+    return 0;
 }
 
 static void initialize_server_fields(server_t *server, int port)
@@ -159,57 +134,4 @@ int server_start(server_t *server)
         return ERROR;
     printf("Server listening on port %d\n", server->port);
     return SUCCESS;
-}
-
-static bool server_handle_events(server_t *server)
-{
-    if (handle_poll_events(server) == -1)
-        return false;
-    if (server->poll_fds[0].revents & POLLIN)
-        server_handle_signal(server);
-    if (server->poll_fds[1].revents & POLLIN)
-        server_accept_client(server);
-    server_process_client_events(server);
-    return true;
-}
-
-// ✅ VERSION CORRIGÉE: Utilise le nouveau système de timing
-bool server_run(server_t *server)
-{
-    double last_resource_spawn_time;
-    double resource_spawn_interval;
-    double current_time;
-    
-    if (!server || server->server_fd == -1)
-        return false;
-    
-    // Initialiser avec un timing plus précis
-    last_resource_spawn_time = get_current_time_seconds();
-    resource_spawn_interval = (double)TIME_UNIT_REP / server->world->frec;
-    
-    printf("Resource respawn interval: %.2f seconds (freq=%d)\n", 
-           resource_spawn_interval, server->world->frec);
-    
-    while (!server_should_stop(server)) {
-        setup_poll_fds(server);
-        if (!server_handle_events(server))
-            return false;
-        
-        current_time = get_current_time_seconds();
-        
-        // Vérifier s'il est temps de spawner des ressources
-        if (current_time - last_resource_spawn_time >= resource_spawn_interval) {
-            printf("Spawning resources at time %.2f\n", current_time);
-            put_ressources_in_tile(server->world->tiles,
-                server->world->height, server->world->width, server);
-            last_resource_spawn_time = current_time;
-        }
-        
-        process_food_consumption(server);
-        
-        // Petite pause pour éviter la surcharge CPU
-        usleep(1000); // 1ms
-    }
-    server_shutdown_sequence(server);
-    return true;
 }
